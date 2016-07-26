@@ -14,6 +14,22 @@ class Object
   
 end
 
+# @param [String] uri
+# @param [Hash] options see {OpenURI}.
+# @yieldparam [IO] io
+# @raise Exception
+def open_uri_safe(uri, options = {}, &f)
+  uri = URI.encode(URI.decode(uri))
+  uri = URI(uri)
+  raise 'URI is invalid' unless ["http", "https", "ftp"].include? uri.scheme
+  io = uri.open(options)
+  begin
+    f.(io)
+  ensure
+    io.close
+  end
+end
+
 # Default value of how often the tracked page is accessed.
 DEFAULT_TTL = "60"
 
@@ -30,15 +46,16 @@ begin
     regexp = cgi["regexp"].or2 { nil }
     regexp = Regexp.new(regexp) if regexp
     # 
-    page =
-      open(uri, if cookie then { "Cookie" => cookie } else {} end).
-      read
+    options = if cookie then { "Cookie" => cookie } else {} end
+    page = open_uri_safe(uri, options) { |io| io.read }
     tracked_content =
       if regexp then
         page = page[regexp].or2 { nil }
       else
         page
       end
+    tracked_content_checksum =
+      Digest::SHA256.hexdigest(uri + "\n" + tracked_content)
     cgi.out("application/rss+xml") do
       <<-RSS
 <?xml version="1.0" encoding="utf-8"?>
@@ -54,7 +71,7 @@ begin
         <title>#{CGI.escapeHTML title}</title>
         <description>The page has been updated</description>
         <link>#{CGI.escapeHTML uri}</link>
-        <guid isPermaLink="false">#{Digest::SHA256.hexdigest(uri + "\n" + tracked_content)}</guid>
+        <guid isPermaLink="false">#{tracked_content_checksum}</guid>
       RSS
     else
       <<-RSS
